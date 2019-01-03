@@ -5,8 +5,12 @@
   "depends": [
     "argonaut",
     "datetime",
+    "exceptions",
+    "foreign",
     "formatters",
+    "generics-rep",
     "js-date",
+    "nullable",
     "prelude"
   ]
 }
