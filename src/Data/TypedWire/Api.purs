@@ -37,7 +37,7 @@ class PathPiece s where
     toPathPiece :: s -> String
 
 instance stringPathPiece :: PathPiece String where
-    toPathPiece = id
+    toPathPiece = identity
 
 instance intPathPiece :: PathPiece Int where
     toPathPiece = show

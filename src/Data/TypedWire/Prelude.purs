@@ -5,8 +5,6 @@ module Data.TypedWire.Prelude
     , module Data.Either
     , module Data.Generic.Rep
     , module Data.Argonaut
-    , module Data.Argonaut.Encode
-    , module Data.Argonaut.Decode
     , module Data.Functor
     , module Data.Maybe
     , module Data.Array
@@ -18,28 +16,21 @@ where
 
 import Control.Alt
 import Control.Monad
-import Control.Monad.Except (throwError)
-import Data.Argonaut
-import Data.Argonaut.Decode
-import Data.Argonaut.Encode
+import Data.Argonaut (class DecodeJson, class EncodeJson, Json, decodeJson, encodeJson, fail)
 import Data.Array
-import Data.Date
 import Data.DateTime as PSD
-import Data.Either
-import Data.Functor
-import Data.Maybe
-import Data.Time
+import Data.Either (Either(..), either, fromRight)
+import Data.Functor (class Functor)
+import Data.Maybe (Maybe(..))
+import Data.Time (Hour, Minute, Second)
 import Data.Date as D
 import Data.Enum (toEnum, fromEnum)
 import Data.Generic.Rep (class Generic)
 import Data.Int as I
 import Data.JSDate as JD
-import Data.List as L
 import Data.Nullable (Nullable)
 import Data.Nullable as Nullable
 import Data.String.Regex as R
-import Effect.Exception (error)
-import Foreign as Foreign
 import Foreign.Object as M
 import Partial.Unsafe (unsafePartial)
 import Prelude
@@ -83,7 +74,7 @@ instance decodeDateTime :: DecodeJson DateTime where
 instance encodeDateTime :: EncodeJson DateTime where
   encodeJson = encodeJson <<< dateToISO <<< JD.fromDateTime <<< unDateTime
 
-newtype Day = Day Date
+newtype Day = Day D.Date
 
 instance showDay :: Show Day where
     show (Day d) = show d
@@ -102,49 +93,49 @@ dayFromString str = do
             y <- toEnum =<< I.fromString ys
             m <- I.fromString ms >>= monthFromInt
             d <- toEnum =<< I.fromString ds
-            pure <<< Day $ canonicalDate y m d
+            pure <<< Day $ D.canonicalDate y m d
         _ -> Nothing
 
-monthFromInt :: Int -> Maybe Month
+monthFromInt :: Int -> Maybe D.Month
 monthFromInt i =
     case i of
-        1 -> Just January
-        2 -> Just February
-        3 -> Just March
-        4 -> Just April
-        5 -> Just May
-        6 -> Just June
-        7 -> Just July
-        8 -> Just August
-        9 -> Just September
-        10 -> Just October
-        11 -> Just November
-        12 -> Just December
+        1  -> Just D.January
+        2  -> Just D.February
+        3  -> Just D.March
+        4  -> Just D.April
+        5  -> Just D.May
+        6  -> Just D.June
+        7  -> Just D.July
+        8  -> Just D.August
+        9  -> Just D.September
+        10 -> Just D.October
+        11 -> Just D.November
+        12 -> Just D.December
         _ -> Nothing
 
-monthToInt :: Month -> Int
+monthToInt :: D.Month -> Int
 monthToInt m =
     case m of
-        January -> 1
-        February -> 2
-        March -> 3
-        April -> 4
-        May -> 5
-        June -> 6
-        July -> 7
-        August -> 8
-        September -> 9
-        October -> 10
-        November -> 11
-        December -> 12
+        D.January -> 1
+        D.February -> 2
+        D.March -> 3
+        D.April -> 4
+        D.May -> 5
+        D.June -> 6
+        D.July -> 7
+        D.August -> 8
+        D.September -> 9
+        D.October -> 10
+        D.November -> 11
+        D.December -> 12
 
 dayToString :: Day -> String
 dayToString (Day dt) =
     show y <> "-" <> show m <> show d
     where
-        y = fromEnum $ year dt
-        m = monthToInt $ month dt
-        d = fromEnum $ day dt
+        y = fromEnum $ D.year dt
+        m = monthToInt $ D.month dt
+        d = fromEnum $ D.day dt
 
 instance decodeDay :: DecodeJson Day where
     decodeJson json = do
@@ -198,7 +189,7 @@ instance decodeTimeOfDay :: DecodeJson TimeOfDay where
 instance encodeTimeOfDay :: EncodeJson TimeOfDay where
     encodeJson = encodeJson <<< timeOfDayToString
 
-decodeJsonMaybe :: forall a. (DecodeJson a) => M.Object _ -> String -> Either String (Maybe a)
+decodeJsonMaybe :: forall a. (DecodeJson a) => M.Object Json -> String -> Either String (Maybe a)
 decodeJsonMaybe o s =
     case M.lookup s o of
         Nothing -> pure Nothing
