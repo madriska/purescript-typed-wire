@@ -16,7 +16,7 @@ where
 
 import Control.Alt
 import Control.Monad
-import Data.Argonaut (class DecodeJson, class EncodeJson, Json, decodeJson, encodeJson, fail)
+import Data.Argonaut hiding ((.??))
 import Data.Array
 import Data.DateTime as PSD
 import Data.Either (Either(..), either, fromRight)
