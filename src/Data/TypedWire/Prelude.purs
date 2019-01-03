@@ -3,14 +3,14 @@ module Data.TypedWire.Prelude
     , module Control.Alt
     , module Control.Monad
     , module Data.Either
-    , module Data.Generic
+    , module Data.Generic.Rep
     , module Data.Argonaut
     , module Data.Argonaut.Encode
     , module Data.Argonaut.Decode
     , module Data.Functor
     , module Data.Maybe
     , module Data.Array
-    , (.??), eatBool
+    , decodeJsonMaybe, (.??), eatBool
     , DateTime(..), Day(..), TimeOfDay(..)
     , AsBase64(..)
     )
@@ -18,33 +18,39 @@ where
 
 import Control.Alt
 import Control.Monad
+import Control.Monad.Except (throwError)
 import Data.Argonaut
-import Data.Argonaut.Encode
 import Data.Argonaut.Decode
+import Data.Argonaut.Encode
 import Data.Array
+import Data.Date
+import Data.DateTime as PSD
+import Data.Either
 import Data.Functor
 import Data.Maybe
-import Data.Generic
-import Data.Date hiding (fromString)
-import qualified Data.Date as D
-import Data.Date.UTC
 import Data.Time
-import qualified Data.String.Regex as R
+import Data.Date as D
+import Data.Enum (toEnum, fromEnum)
+import Data.Generic.Rep (class Generic)
 import Data.Int as I
-import Data.Either
-import Data.StrMap as M
+import Data.JSDate as JD
+import Data.List as L
+import Data.Nullable (Nullable)
+import Data.Nullable as Nullable
+import Data.String.Regex as R
+import Effect.Exception (error)
+import Foreign as Foreign
+import Foreign.Object as M
+import Partial.Unsafe (unsafePartial)
 import Prelude
 
-foreign import dateToISO :: JSDate -> String
+foreign import dateToISO :: JD.JSDate -> String
+foreign import dateFromISO :: String -> Nullable JD.JSDate
 
 newtype AsBase64 = AsBase64 String
-derive instance genericAsBase64 :: Generic AsBase64
-
-instance showAsBase64 :: Show AsBase64 where
-    show = gShow
-
-instance eqAsBase64 :: Eq AsBase64 where
-    eq = gEq
+derive instance eqAsBase64 :: Eq AsBase64
+derive newtype instance showAsBase64 :: Show AsBase64
+derive instance genericAsBase64 :: Generic AsBase64 _
 
 unAsBase64 :: AsBase64 -> String
 unAsBase64 (AsBase64 d) = d
@@ -56,7 +62,7 @@ instance decodeAsBase64 :: DecodeJson AsBase64 where
 instance encodeAsBase64 :: EncodeJson AsBase64 where
     encodeJson = encodeJson <<< unAsBase64
 
-newtype DateTime = DateTime Date
+newtype DateTime = DateTime PSD.DateTime
 
 instance showDateTime :: Show DateTime where
     show (DateTime d) = show d
@@ -64,18 +70,18 @@ instance showDateTime :: Show DateTime where
 instance eqDateTime :: Eq DateTime where
     eq (DateTime a) (DateTime b) = eq a b
 
-unDateTime :: DateTime -> Date
+unDateTime :: DateTime -> PSD.DateTime
 unDateTime (DateTime d) = d
 
 instance decodeDateTime :: DecodeJson DateTime where
     decodeJson json = do
         str <- decodeJson json
-        case D.fromString str of
-            Nothing -> fail "Inavlid datetime"
-            Just d -> pure (DateTime d)
+        case JD.toDateTime =<< Nullable.toMaybe (dateFromISO str) of
+          Nothing -> fail $ "Invalid datetime: " <> str
+          Just d -> pure (DateTime d)
 
 instance encodeDateTime :: EncodeJson DateTime where
-    encodeJson = encodeJson <<< dateToISO <<< toJSDate <<< unDateTime
+  encodeJson = encodeJson <<< dateToISO <<< JD.fromDateTime <<< unDateTime
 
 newtype Day = Day Date
 
@@ -86,18 +92,17 @@ instance eqDay :: Eq Day where
     eq (Day a) (Day b) = eq a b
 
 dayRegex :: R.Regex
-dayRegex =
-    R.regex "([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})" R.noFlags
+dayRegex = unsafePartial $ fromRight $ R.regex "([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})" mempty
 
 dayFromString :: String -> Maybe Day
 dayFromString str = do
     matches <- R.match dayRegex str
-    case matches of
+    case (fromFoldable matches) of
         [Just ys, Just ms, Just ds] -> do
-            y <- I.fromString ys
+            y <- toEnum =<< I.fromString ys
             m <- I.fromString ms >>= monthFromInt
-            d <- I.fromString ds
-            Day <$> date (Year y) m (DayOfMonth d)
+            d <- toEnum =<< I.fromString ds
+            pure <<< Day $ canonicalDate y m d
         _ -> Nothing
 
 monthFromInt :: Int -> Maybe Month
@@ -135,19 +140,17 @@ monthToInt m =
 
 dayToString :: Day -> String
 dayToString (Day dt) =
-    show y ++ "-" ++ show m ++ show d
+    show y <> "-" <> show m <> show d
     where
-        y = unYear $ year dt
+        y = fromEnum $ year dt
         m = monthToInt $ month dt
-        d = unDay $ dayOfMonth dt
-        unYear (Year i) = i
-        unDay (DayOfMonth i) = i
+        d = fromEnum $ day dt
 
 instance decodeDay :: DecodeJson Day where
     decodeJson json = do
         str <- decodeJson json
         case dayFromString str of
-            Nothing -> fail "Inavlid day"
+            Nothing -> fail "Invalid day"
             Just d -> pure d
 
 instance encodeDay :: EncodeJson Day where
@@ -155,9 +158,9 @@ instance encodeDay :: EncodeJson Day where
 
 newtype TimeOfDay =
     TimeOfDay
-    { hour :: HourOfDay
-    , minute :: MinuteOfHour
-    , second :: SecondOfMinute
+    { hour :: Hour
+    , minute :: Minute
+    , second :: Second
     }
 
 instance eqTimeOfDay :: Eq TimeOfDay where
@@ -165,26 +168,25 @@ instance eqTimeOfDay :: Eq TimeOfDay where
         a.hour == b.hour && a.minute == b.minute && a.second == b.second
 
 instance showTimeOfDay :: Show TimeOfDay where
-    show a = "TimeOfDay (" ++ timeOfDayToString a ++ ")"
+    show a = "TimeOfDay (" <> timeOfDayToString a <> ")"
 
 timeOfDayRegex :: R.Regex
-timeOfDayRegex =
-    R.regex "([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2})" R.noFlags
+timeOfDayRegex = unsafePartial $ fromRight $ R.regex "([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2})" mempty
 
 timeOfDayFromString :: String -> Maybe TimeOfDay
 timeOfDayFromString str = do
     matches <- R.match timeOfDayRegex str
-    case matches of
+    case (fromFoldable matches) of
         [Just hs, Just ms, Just ss] -> do
-            h <- I.fromString hs
-            m <- I.fromString ms
-            s <- I.fromString ss
-            pure $ TimeOfDay { hour: HourOfDay h, minute: MinuteOfHour m, second: SecondOfMinute s }
+            hour   <- toEnum =<< I.fromString hs
+            minute <- toEnum =<< I.fromString ms
+            second <- toEnum =<< I.fromString ss
+            pure $ TimeOfDay { hour, minute, second }
         _ -> Nothing
 
 timeOfDayToString :: TimeOfDay -> String
-timeOfDayToString (TimeOfDay { hour: (HourOfDay h), minute: (MinuteOfHour m), second: (SecondOfMinute s) }) =
-    show h ++ ":" ++ show m ++ show s
+timeOfDayToString (TimeOfDay { hour, minute, second }) =
+    show (fromEnum hour) <> ":" <> show (fromEnum minute) <> ":" <> show (fromEnum second)
 
 instance decodeTimeOfDay :: DecodeJson TimeOfDay where
     decodeJson json = do
@@ -196,11 +198,12 @@ instance decodeTimeOfDay :: DecodeJson TimeOfDay where
 instance encodeTimeOfDay :: EncodeJson TimeOfDay where
     encodeJson = encodeJson <<< timeOfDayToString
 
-(.??) :: forall a. (DecodeJson a) => JObject -> String -> Either String (Maybe a)
-(.??) o s =
+decodeJsonMaybe :: forall a. (DecodeJson a) => M.Object _ -> String -> Either String (Maybe a)
+decodeJsonMaybe o s =
     case M.lookup s o of
         Nothing -> pure Nothing
         Just val -> Just <$> decodeJson val
+infixl 5 decodeJsonMaybe as .??
 
 eatBool :: Boolean -> Either String Unit
 eatBool _ = pure unit
